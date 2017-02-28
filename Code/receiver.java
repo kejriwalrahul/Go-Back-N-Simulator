@@ -49,7 +49,7 @@ class GBNServer{
 	/*
 		Configures and starts server/recvr.
 	*/
-	GBNServer(int p, int n, double per, boolean d){
+	public GBNServer(int p, int n, double per, boolean d){
 		
 		// Store Params
 		port = p;
@@ -113,8 +113,10 @@ class GBNServer{
 			
 			// Simulate Network Errors
 			boolean corrupt = genProb();
-			if(corrupt)	
+			if(corrupt){
+				pkt--;
 				continue;
+			}	
 
 			// Get frame seq #
 			byte[] data = data_packet.getData();
