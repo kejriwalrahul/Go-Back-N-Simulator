@@ -27,12 +27,12 @@ class GBNServer{
 	// Recvr Parameters
 	int port, max_pkts;
 	double pkt_err_rate;
-	boolean debug = False;
+	boolean debug = false;
 
 	// In doubt
 	int pkt_len;
+	int window_size;
 	int ack_len = 40;
-	int window_size = 255;
 
 	// Server Stuff
 	DatagramSocket server;
@@ -49,7 +49,7 @@ class GBNServer{
 	/*
 		Configures and starts server/recvr.
 	*/
-	public GBNServer(int p, int n, double per, boolean d){
+	public GBNServer(int p, int n, double per, boolean d, int pl, int ws){
 		
 		// Store Params
 		port = p;
@@ -58,7 +58,8 @@ class GBNServer{
 		debug = d;
 
 		// In doubt
-		pkt_len = 100;
+		pkt_len = pl;
+		window_size = ws;
 
 		try{
 			// Build Server
@@ -86,9 +87,9 @@ class GBNServer{
 		double test_val = Math.random();
 
 		if(test_val <= pkt_err_rate)
-			return True;
+			return true;
 		else
-			return False;
+			return false;
 	}
 
 	/*
@@ -166,29 +167,37 @@ class GBNServer{
 		Parse cmd line args and start Recvr
 */
 public class receiver{
-	void errorExit(String s){
+	static void errorExit(String s){
 		System.out.println("Error: " + s);
 		System.out.println("Error: " + s);
 	}
 
 	public static void main(String[] args){
-		// Instance Parameters
-		int port, max_pkts;
-		double pkt_err_rate;
-		boolean debug = False;
+
+		// Instance Parameters (Default Values)
+		int port = 1080;
+		int max_pkts = 1024;
+		int pkt_len  = 1500;
+		int window_size = 8;
+		double pkt_err_rate = 0.2;
+		boolean debug = false;
 
 		// Process Command Line Args
 		int next_arg = 0;
 		for(String arg: args){
 			if(next_arg == 0){
 				if(arg.equals("-d"))
-					debug = True;
+					debug = true;
 				else if(arg.equals("-p"))
 					next_arg = 1;
 				else if(arg.equals("-n"))
 					next_arg = 2;
 				else if(arg.equals("-e"))
 					next_arg = 3;
+				else if(arg.equals("-l"))
+					next_arg = 4;
+				else if(arg.equals("-w"))
+					next_arg = 5;
 				else
 					errorExit("Incorrect Usage!");
 			}
@@ -203,6 +212,12 @@ public class receiver{
 					case 3: pkt_err_rate = Double.parseDouble(arg);
 							break;
 
+					case 4: pkt_len = Integer.parseInt(arg);
+							break;
+
+					case 5: window_size = Integer.parseInt(arg);
+							break;
+
 					default: errorExit("Incorrect Usage!");
 				}
 				next_arg = 0;
@@ -210,6 +225,6 @@ public class receiver{
 		}
 
 		// Begin and Run Server
-		GBNServer server = new GBNServer(port, max_pkts, pkt_err_rate, debug);
+		GBNServer server = new GBNServer(port, max_pkts, pkt_err_rate, debug, pkt_len, window_size);
 	}
 }

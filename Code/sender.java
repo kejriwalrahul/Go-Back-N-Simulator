@@ -3,10 +3,10 @@ import java.io.*;
 import java.net.*;
 import java.lang.*;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
+
 /*
 	To Do:
-		Initializa Params
-		Send params to classes
 		wat if sending 11th pkt bef any of 10 pkt ack arrives?
 */
 
@@ -17,24 +17,28 @@ import java.lang.*;
 class Buffer{
 	// Buffer internal vars
 	public int max_buf_size;
-	public Queue<byte[]> buf = new Queue<byte[]>();
+	public ConcurrentLinkedQueue<byte[]> buf;
 
 	int next_seq_no = 0;
 
 	// Stores count of no of pkts acked 
-	public acked_pkts = 0;
+	public int acked_pkts = 0;
+
+	Buffer(){
+		buf = new ConcurrentLinkedQueue<byte[]>();
+	}
 
 	void push(byte[] buf){
-		if(buf.size() >= max_buf_size)
+		if(this.buf.size() >= max_buf_size)
 			return;
 
-		buf[0] = next_seq_no >> 24;
-		buf[1] = next_seq_no >> 16;
-		buf[2] = next_seq_no >>  8;
-		buf[3] = next_seq_no;
+		buf[0] = (byte)(next_seq_no >> 24);
+		buf[1] = (byte)(next_seq_no >> 16);
+		buf[2] = (byte)(next_seq_no >>  8);
+		buf[3] = (byte)(next_seq_no);
 		next_seq_no++;
 
-		buf.add(buf);
+		this.buf.add(buf);
 	}
 
 	boolean is_empty(){
@@ -43,7 +47,7 @@ class Buffer{
 
 	byte[] pop(){
 		if(buf.size() == 0)
-			return None;
+			return null;
 	
 		return buf.remove();
 	}
@@ -65,6 +69,13 @@ class PacketGenerator extends Thread{
 	// Time between 2 successive pkts
 	volatile double time_btwn_pkts;
 
+	PacketGenerator(Buffer b, int pl, int mp, double pgr){
+		buf = b;
+		pkt_len = pl;
+		max_pkts = mp;
+		pkt_gen_rate = pgr;
+	}
+
 	// Generate Packets and place in buffer
 	public void run(){
 		time_btwn_pkts = 1000.0 / pkt_gen_rate;
@@ -73,10 +84,16 @@ class PacketGenerator extends Thread{
 			// Generate & Store a random pkt
 			byte[] new_pkt = new byte[pkt_len]; 
 			new Random().nextBytes(new_pkt);
-			buf.push(new_pkt)
+			buf.push(new_pkt);
 
 			// Wait till time to gen next pkt
-			Thread.sleep(time_btwn_pkts);
+			try{
+				Thread.sleep((long)time_btwn_pkts);
+			}
+			catch(InterruptedException e){
+				System.out.println("Errored");
+				System.exit(1);
+			}
 		}
 	}
 }
@@ -112,8 +129,8 @@ class ClientXmitter extends Thread{
 	// Stores sent_off pkts
 	volatile static byte[][] sent_buffer = new byte[window_size][pkt_len];
 	volatile static int[] retry_attempts = new int[window_size];
-	volatile static Timer[] timers       = new Timer()[window_size]; 
-	volatile static long timer_timestamps = new long[window_size]; 
+	volatile static Timer[] timers       = new Timer[window_size]; 
+	volatile static long timer_timestamps[] = new long[window_size]; 
 
 	boolean isSender;
 
@@ -121,12 +138,26 @@ class ClientXmitter extends Thread{
 		isSender = send_or_recv;
 		if(send_or_recv){
 			buf = b;
+			
+			try{
+				client = new DatagramSocket();
+			}
+			catch(SocketException e){
+				System.out.println("Socket Open Error");
+				System.exit(1);
+			}
 
-			client = new DatagramSocket()
-			InetAddress IPAddress = InetAddress.getByName(recvr);
+			InetAddress IPAddress; 
+			try{
+				IPAddress = InetAddress.getByName(recvr);
+				data_packet = new DatagramPacket(new byte[pkt_len], pkt_len, IPAddress, port);
+			}
+			catch (UnknownHostException e) {
+				System.out.println("IPAddress lookup failed");
+				System.exit(1);
+			}
 
-			data_packet = new DatagramPacket(new Byte[pkt_len], pkt_len, IPAddress, port);
-			ack_packet  = new DatagramPacket(new Byte[ack_len], ack_len);
+			ack_packet  = new DatagramPacket(new byte[ack_len], ack_len);
 
 			for(int i=0; i<window_size; i++)
 				retry_attempts[i] = 0;			
@@ -139,7 +170,7 @@ class ClientXmitter extends Thread{
 		/*
 			TimerTask Extended Class for handling timeouts
 		*/
-		class myTimerTask extends TimerTask(){
+		class myTimerTask extends TimerTask{
 			public int timeout_pkt;
 
 			myTimerTask(int seq_num){
@@ -157,11 +188,28 @@ class ClientXmitter extends Thread{
 					timers[i].cancel();
 					timers[i].purge();
 
-					retry_attempts[i]++;
-					DatagramPacket retry_data_packet = new DatagramPacket(new Byte[pkt_len], pkt_len, IPAddress, port);
-					retry_data_packet.setData(sent_buffer[i]);
+					double timeout_time;
+					if(no_of_pkts_sent < 10){
+						timeout_time = 100.0;
+					}
+					else{
+						timeout_time = 2*avg_rtt;
+					}
 
-					timer[i].schedule(new myTimerTask(timeout_pkt));
+					retry_attempts[i]++;
+					
+					DatagramPacket retry_data_packet;
+					try{
+						InetAddress IPAddress = InetAddress.getByName(recvr);
+						retry_data_packet = new DatagramPacket(new byte[pkt_len], pkt_len, IPAddress, port);
+						retry_data_packet.setData(sent_buffer[i]);
+					}
+					catch (UnknownHostException e) {
+						System.out.println("UnknownHostException");
+						System.exit(1);
+					}
+					
+					timers[i].schedule(new myTimerTask(timeout_pkt), (long)timeout_time);
 					timer_timestamps[i] = System.nanoTime();
 				}
 			}
@@ -186,12 +234,18 @@ class ClientXmitter extends Thread{
 					sent_buffer[seq_next] = curr;
 					retry_attempts[seq_next] = 0;
 
-					data_packet.setData(curr)
-					client.send(data_packet);
+					data_packet.setData(curr);
+					try{
+						client.send(data_packet);
+					}
+					catch (IOException e) {
+						System.out.println("IOException at send data pkt");
+						System.exit(1);
+					}
 
 					// Set timeout timer
 					timers[seq_next] = new Timer();
-					timers[seq_next].schedule(new myTimerTask(seq_next), timeout_time);
+					timers[seq_next].schedule(new myTimerTask(seq_next), (long)timeout_time);
 					timer_timestamps[seq_next] = System.nanoTime();
 
 					// update seq_next
@@ -207,9 +261,16 @@ class ClientXmitter extends Thread{
 		// For reciever thread
 		else{
 			while(buf.acked_pkts < max_pkts){
-				client.receive(ack_packet);
+				try{
+					client.receive(ack_packet);
+				}
+				catch(IOException e){
+					System.out.println("IOException at recv ack pkt");
+					System.exit(1);
+				}
 
-				int ack_seq = (ack_packet[0] << 24) + (ack_packet[1] << 16) + (ack_packet[2] << 8) + ack_packet[3];
+				int ack_seq = (ack_packet.getData()[0] << 24) + (ack_packet.getData()[1] << 16) + (ack_packet.getData()[2] << 8) 
+									+ ack_packet.getData()[3];
 				
 				// Ack all till ack_seq
 				for(int i=seq_beg; i != (ack_seq+1)%window_size; i=(i+1)%window_size){
@@ -222,7 +283,7 @@ class ClientXmitter extends Thread{
 					timetaken /= 1000000;
 
 					// update rtt
-					avg_rtt = ((avg_rtt * acked_pkts) + timetaken)/(acked_pkts + 1);
+					avg_rtt = ((avg_rtt * buf.acked_pkts) + timetaken)/(buf.acked_pkts + 1);
 					buf.acked_pkts ++;
 
 					// update windows vars
@@ -240,24 +301,29 @@ class ClientXmitter extends Thread{
 		Parse cmd line args and starts threads
 */
 public class sender{
-	void errorExit(String s){
+	static void errorExit(String s){
 		System.out.println("Error: " + s);
 		System.out.println("Error: " + s);
 	}
 
 	public static void main(String[] args){
 		// Instance Parameters
-		String recvr;
-		int port, pkt_len, pkt_gen_rate, max_pkts;
-		int window_size, max_buf_size;
-		boolean debug = False;
+		String recvr = "localhost";
+		
+		int port = 1080;
+		int pkt_len = 1500;
+		int pkt_gen_rate = 10;
+		int max_pkts = 1024;
+		int window_size = 8;
+		int max_buf_size = 24;
+		boolean debug = false;
 
 		// Process Command Line Args
 		int next_arg = 0;
 		for(String arg: args){
 			if(next_arg == 0){
 				if(arg.equals("-d"))
-					debug = True;
+					debug = true;
 				else if(arg.equals("-s"))
 					next_arg = 1;
 				else if(arg.equals("-p"))
@@ -308,12 +374,21 @@ public class sender{
 		Buffer buf = new Buffer();
 
 		// Create thread objects
-		PacketGenerator p = new PacketGenerator(buf);
-		ClientXmitter sendThread = new ClientXmitter(buf, True);
-		ClientXmitter recvThread = new ClientXmitter(None, False);
+		PacketGenerator p = new PacketGenerator(buf, pkt_len, max_pkts, pkt_gen_rate);
+		ClientXmitter sendThread = new ClientXmitter(buf, true);
+		ClientXmitter recvThread = new ClientXmitter(null, false);
+
+		ClientXmitter.recvr = recvr;
+		ClientXmitter.port  = port;
+		ClientXmitter.pkt_len = pkt_len;
+		ClientXmitter.max_pkts = max_pkts;
+		ClientXmitter.window_size = window_size;
+		ClientXmitter.debug = debug;
+		ClientXmitter.ack_len = 40;
 
 		// Start Threads
-		c.start();
 		p.start();
+		sendThread.start();
+		recvThread.start();
 	}
 }
