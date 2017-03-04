@@ -1,22 +1,13 @@
+/*
+	Program for receiving data pkts in Go-Back-N Nimulation
+
+	Written by Rahul Kejriwal
+*/
+
 import java.util.*;
 import java.io.*;
 import java.net.*;
 import java.nio.*;
-
-/*
-	To Do:
-		Initializa Params
-		Try Serilialization
-	
-class MyPacket{
-	int seq_no;
-	byte[] data;
-
-	MyPacket(int len){
-		data = new byte[len];
-	}
-}
-*/
 
 /*
 	Recvr Class:
@@ -29,22 +20,18 @@ class GBNServer{
 	double pkt_err_rate;
 	boolean debug = false;
 
-	// In doubt
+	// Assumption: These are also sent
 	int pkt_len;
 	int window_size;
 	int ack_len = 40;
 
-	// Server Stuff
+	// Internal Server Stuff
 	DatagramSocket server;
 	DatagramPacket data_packet; 
 	DatagramPacket ack_packet; 
 
 	// Local State Vars 
 	long startTime;
-
-	/*	
-	MyPacket data_pkt;
-	*/
 
 	/*
 		Configures and starts server/recvr.
@@ -57,21 +44,25 @@ class GBNServer{
 		pkt_err_rate = per;
 		debug = d;
 
-		// In doubt
+		// Assumed Vars
 		pkt_len = pl;
 		window_size = ws;
 
 		try{
-			// Build Server
+			// Build Server Socket
 			server = new DatagramSocket(port);
 			
-			// data_pkt = new MyPacket(pkt_len);
+			// Build Packet Objects
 			data_packet = new DatagramPacket(new byte[pkt_len], pkt_len);			
 			ack_packet  = new DatagramPacket(new byte[ack_len], ack_len);
 
 			// Initialize Start time
 			startTime = System.nanoTime();
+	
+			// Sanity Check Message
+			System.out.println("Receiver up at port " + Integer.toString(port));
 
+			// Start Server
 			run_server();
 		}
 		catch(Exception e){
@@ -80,7 +71,7 @@ class GBNServer{
 	}
 
 	/*
-		Function to generate bool with a given probability.
+		Function to generate bool with pkt_err_rate probability.
 		Used to randomly decide pkt errors.
 	*/
 	boolean genProb(){
@@ -97,20 +88,22 @@ class GBNServer{
 			Receives data pkts and xmits ACKs from here. 
 	*/
 	void run_server() throws IOException{
-		// State Variables
-		int NFE = 0;
+		
+		// Internal State Variables
+		int NFE =  0;
 		int LFR = -1;
 
-		// Locals
+		// Locals / Temp vars
 		int frame_seq = -1;
 		long currTime;
 
-		// Recv as long as pkts arrive
-		int pkt;
-		for(pkt = 0; pkt < max_pkts; pkt++){
+		// Recv as long as max_pkts not received properly
+		for(int pkt = 0; pkt < max_pkts; pkt++){
 			
 			// Receive a pkt
+			// System.out.println("Waiting for Msg Pkt!");
 			server.receive(data_packet);
+			// System.out.println("Received a Msg Pkt!");
 			
 			// Simulate Network Errors
 			boolean corrupt = genProb();
@@ -125,12 +118,15 @@ class GBNServer{
 
 			// Check whether to drop pkt
 			boolean drop = false;
-			if(frame_seq != NFE)
+			if(frame_seq != NFE){
 				drop = true;
+				pkt--;
+			}
+
 			// Else update state vars
 			else{
 				LFR  = frame_seq;
-				NFE  = (NFE + 1)%window_size;
+				NFE  = (NFE + 1) % window_size;
 			}
 
 			// Calculate offset time
@@ -139,7 +135,7 @@ class GBNServer{
 			// Print DEBUG msgs
 			if(debug){
 				System.out.println("Seq #: " + frame_seq +
-				 " Time Received: " + Long.toString((currTime/1000000)%1000) + ":" + Long.toString((currTime/1000)%1000) + 
+				 " Time Received: " + Long.toString((currTime/1000000)) + ":" + Long.toString((currTime/1000)%1000) + 
 				 " Packet dropped: " + drop);
 			}
 
@@ -154,6 +150,8 @@ class GBNServer{
 
 				// Build ack pkt
 				ack_packet.setData(ack_msg); 
+				ack_packet.setAddress(data_packet.getAddress());
+				ack_packet.setPort(data_packet.getPort());
 
 				// Send ACK
 				server.send(ack_packet);
@@ -169,7 +167,7 @@ class GBNServer{
 public class receiver{
 	static void errorExit(String s){
 		System.out.println("Error: " + s);
-		System.out.println("Error: " + s);
+		System.exit(1);
 	}
 
 	public static void main(String[] args){
