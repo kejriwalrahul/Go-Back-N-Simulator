@@ -14,9 +14,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /*
 	Possible Bug:
 		1. Wat if sending 11th pkt bef any of 10 pkt ack arrives?
-		3. [DONE] windows size not attained
-		6. if corrupted bugs out
-		7. spurious rexmissions?
+		2. [FIXED] windows size not attained
+		3. [FIXED] spurious rexmissions?
 */
 
 /*
@@ -242,9 +241,10 @@ class ClientXmitter extends Thread{
 
 			@Override
 			public void run(){
+
 				/*
-				if(s.retry_attempts[timeout_pkt] == 5){
-					System.out.println("Exceeded Max No of Retries for Retransmission!");
+				if(true){
+					System.out.println("Timeout at " + Integer.toString(timeout_pkt));
 					System.exit(1);
 				}
 				*/
@@ -287,11 +287,17 @@ class ClientXmitter extends Thread{
 							InetAddress IPAddress = InetAddress.getByName(s.recvr);
 							retry_data_packet = new DatagramPacket(new byte[s.pkt_len], s.pkt_len, IPAddress, s.port);
 							retry_data_packet.setData(s.sent_buffer[i]);
+							s.client.send(retry_data_packet);
 						}
 						catch (UnknownHostException e) {
 							System.out.println("Unknown Host Given!");
 							e.printStackTrace();
 							System.exit(1);
+						}
+						catch(IOException e){
+							System.out.println("Unable to rexmit data pkt!");
+							e.printStackTrace();
+							System.exit(1);							
 						}
 						
 						// Start timer
