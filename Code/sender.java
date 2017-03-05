@@ -14,15 +14,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /*
 	Possible Bug:
 		1. Wat if sending 11th pkt bef any of 10 pkt ack arrives?
-		2. Out of order ACKs
-
-	Left:
-		1. Buffer.acked_pkts?
-		2. debug msg
-		3. Assuming instantaneous pkt generation
-		4. DONE seq_left = window_size - 2? 
-		5. Wat if recvr is not hostname but ip address
-		6. print shit stuff for exceeded retries?
+		3. [DONE] windows size not attained
+		6. if corrupted bugs out
+		7. spurious rexmissions?
 */
 
 /*
@@ -100,7 +94,7 @@ class PacketGenerator extends Thread{
 	}
 
 	// Generate Packets and place in buffer
-	public synchronized void run(){
+	public void run(){
 		System.out.println("Started Packet Generation Thread!");
 
 		while(buf.acked_pkts < max_pkts){
@@ -134,6 +128,7 @@ class SharedData{
 	int port, pkt_len, max_pkts;
 	int window_size;
 	boolean debug;
+	boolean deep_debug;
 
 	// Assumed
 	int ack_len;
@@ -158,7 +153,7 @@ class SharedData{
 	// Stores sender start time
 	long startTime;
 
-	public SharedData(Buffer b, String r, int p, int pl, int mp, int ws, boolean d, int al){
+	public SharedData(Buffer b, String r, int p, int pl, int mp, int ws, boolean d, int al, boolean dd){
 		// Store instance params
 		buf 	= b;
 		recvr 	= r;
@@ -169,11 +164,13 @@ class SharedData{
 		debug 	= d;
 		ack_len = al;
 
+		deep_debug = dd;
+
 		// Configure window params
 		seq_beg = 0;
 		seq_end = window_size - 2;
 		seq_next = 0;
-		seq_left = window_size - 2;
+		seq_left = window_size - 1;
 		no_of_pkts_sent = 0; 
 
 		startTime = System.nanoTime();
@@ -232,7 +229,7 @@ class ClientXmitter extends Thread{
 	}
 
 	// Xmit Packets from buffer
-	public synchronized void run(){
+	public void run(){
 		/*
 			TimerTask Extended Class for handling timeouts
 		*/
@@ -245,93 +242,121 @@ class ClientXmitter extends Thread{
 
 			@Override
 			public void run(){
-				// Check if not exceeded max retries
+				/*
 				if(s.retry_attempts[timeout_pkt] == 5){
 					System.out.println("Exceeded Max No of Retries for Retransmission!");
 					System.exit(1);
 				}
+				*/
 
 				// rexmitt and increment retries
-				for(int i=s.seq_beg; i != timeout_pkt; i = (i+1)%s.window_size){
-					s.timer_tasks[i].cancel();
+				for(int i=s.seq_beg; i != (timeout_pkt + 1) % s.window_size; i = (i+1)%s.window_size){				
+					synchronized(s){
+	
+						// Check if not exceeded max retries
+						if(s.retry_attempts[i] == 5){
+							System.out.println("Exceeded Max No of Retries for Retransmission for seq # " + Integer.toString(i) + "!");
+							
+							if(s.deep_debug){
+								System.out.println("Average RTT " + Double.toString(s.avg_rtt) + "!");
+								for(int j=0; j<s.window_size; j++)
+									System.out.println("Seq # " + Integer.toString(j) + " Retried " + 
+														Integer.toString(s.retry_attempts[j]) + " times");								
+							}
+							
+							System.exit(1);
+						}
 
-					// Compute new timeout time
+						s.timer_tasks[i].cancel();
+
+						// Compute new timeout time
+						double timeout_time;
+						if(s.no_of_pkts_sent < 10){
+							timeout_time = 100.0;
+						}
+						else{
+							timeout_time = Math.ceil(2*s.avg_rtt);
+						}
+
+						// Increment retrial attempts
+						s.retry_attempts[i]++;
+						
+						// ReXmitt
+						DatagramPacket retry_data_packet;
+						try{
+							InetAddress IPAddress = InetAddress.getByName(s.recvr);
+							retry_data_packet = new DatagramPacket(new byte[s.pkt_len], s.pkt_len, IPAddress, s.port);
+							retry_data_packet.setData(s.sent_buffer[i]);
+						}
+						catch (UnknownHostException e) {
+							System.out.println("Unknown Host Given!");
+							e.printStackTrace();
+							System.exit(1);
+						}
+						
+						// Start timer
+						s.timer_tasks[i] = new myTimerTask(timeout_pkt); 
+						s.timer_thread.schedule(s.timer_tasks[i], (long) timeout_time);
+						s.timer_timestamps[i] = System.nanoTime();					
+
+						if(s.deep_debug)
+							System.out.println("Timer started at " + Long.toString(s.timer_timestamps[i]) + " for going off in " +
+											Long.toString((long) timeout_time));
+					}
+				}
+			}
+		}
+
+		if(s.deep_debug)
+			System.out.println("Started Client Transmission Thread!");
+
+		// If pkt count not reached
+		while(s.buf.acked_pkts < s.max_pkts){
+			synchronized(s){
+				// If buffer is non-empty, iterate
+				if(!s.buf.is_empty() && s.seq_left > 0){
+
+					// Compute timeout time
 					double timeout_time;
 					if(s.no_of_pkts_sent < 10){
 						timeout_time = 100.0;
 					}
 					else{
-						timeout_time = 2*s.avg_rtt;
+						timeout_time = Math.ceil(2*s.avg_rtt);
+						if(s.deep_debug)
+							System.out.println("Timeout in " + Long.toString((long)timeout_time));
 					}
 
-					// Increment retrial attempts
-					s.retry_attempts[i]++;
-					
-					// ReXmitt
-					DatagramPacket retry_data_packet;
+					// Setup current pkt
+					byte[] curr = s.buf.pop();
+					s.sent_buffer[s.seq_next] = curr;
+					s.retry_attempts[s.seq_next] = 0;
+
+					data_packet.setData(curr);
 					try{
-						InetAddress IPAddress = InetAddress.getByName(s.recvr);
-						retry_data_packet = new DatagramPacket(new byte[s.pkt_len], s.pkt_len, IPAddress, s.port);
-						retry_data_packet.setData(s.sent_buffer[i]);
+						s.client.send(data_packet);
 					}
-					catch (UnknownHostException e) {
-						System.out.println("Unknown Host Given!");
+					catch (IOException e) {
+						System.out.println("IOException while sending data pkt!");
 						e.printStackTrace();
 						System.exit(1);
 					}
-					
-					// Start timer
-					s.timer_tasks[i] = new myTimerTask(timeout_pkt); 
-					s.timer_thread.schedule(s.timer_tasks[i], (long) timeout_time);
-					s.timer_timestamps[i] = System.nanoTime();					
+
+					// Set timeout timer
+					s.timer_tasks[s.seq_next] = new myTimerTask(s.seq_next);
+					s.timer_thread.schedule(s.timer_tasks[s.seq_next], (long) timeout_time);
+					s.timer_timestamps[s.seq_next] = System.nanoTime();
+
+					if(s.deep_debug)
+						System.out.println("Xmitted " + Integer.toString(s.seq_next));	
+
+					// update seq_next
+					s.seq_next = (s.seq_next + 1) % s.window_size;
+					s.seq_left --;
+					s.no_of_pkts_sent ++;
 				}
+				// Else reiterate
 			}
-		}
-
-		System.out.println("Started Client Transmission Thread!");
-
-		// If pkt count not reached
-		while(s.buf.acked_pkts < s.max_pkts){
-			// If buffer is non-empty, iterate
-			if(!s.buf.is_empty() && s.seq_left > 0){
-
-				// Compute timeout time
-				double timeout_time;
-				if(s.no_of_pkts_sent < 10){
-					timeout_time = 100.0;
-				}
-				else{
-					timeout_time = 2*s.avg_rtt;
-				}
-
-				// Setup current pkt
-				byte[] curr = s.buf.pop();
-				s.sent_buffer[s.seq_next] = curr;
-				s.retry_attempts[s.seq_next] = 0;
-
-				data_packet.setData(curr);
-				try{
-					s.client.send(data_packet);
-				}
-				catch (IOException e) {
-					System.out.println("IOException while sending data pkt!");
-					e.printStackTrace();
-					System.exit(1);
-				}
-
-				// Set timeout timer
-				s.timer_tasks[s.seq_next] = new myTimerTask(s.seq_next);
-				s.timer_thread.schedule(s.timer_tasks[s.seq_next], (long) timeout_time);
-				s.timer_timestamps[s.seq_next] = System.nanoTime();
-
-				System.out.println("Xmitted " + Integer.toString(s.seq_next));	
-
-				// update seq_next
-				s.seq_next = (s.seq_next + 1) % s.window_size;
-				s.seq_left --;
-				s.no_of_pkts_sent ++;
-			}
-			// Else reiterate
 		}
 		
 		// Close socket
@@ -369,11 +394,11 @@ class ClientRecvr extends Thread{
 		}
 	}
 
-	public synchronized void run(){
-		System.out.println("Started Client Receiver Thread!");
+	public void run(){
+		if(s.deep_debug)
+			System.out.println("Started Client Receiver Thread!");
 
 		while(s.buf.acked_pkts < s.max_pkts){
-			
 			// Receive ACK pkt
 			try{
 				s.client.receive(ack_packet);
@@ -384,44 +409,53 @@ class ClientRecvr extends Thread{
 				System.exit(1);
 			}
 
-			// Get sequence #
-			int ack_seq = (ack_packet.getData()[0] << 24) + (ack_packet.getData()[1] << 16) + (ack_packet.getData()[2] << 8) 
-								+ ack_packet.getData()[3];
-			
-			double timetaken = 0;
-			// Ack all till ack_seq
-			for(int i=s.seq_beg; i != (ack_seq)%s.window_size; i=(i+1)%s.window_size){
+			synchronized(s){
+				// Get sequence #
+				int ack_seq = (ack_packet.getData()[0] << 24) + (ack_packet.getData()[1] << 16) + (ack_packet.getData()[2] << 8) 
+									+ ack_packet.getData()[3];
 				
-				System.out.println("Canceling " + Integer.toString(i));
-				// cancel timer
-				s.timer_tasks[i].cancel();
-				
-				// check time
-				timetaken = System.nanoTime() - s.timer_timestamps[i];
-				timetaken /= 1000000;
+				double timetaken = 0;
+				// Ack all till ack_seq
+				for(int i=s.seq_beg; i != (ack_seq)%s.window_size; i=(i+1)%s.window_size){
+					
+					if(s.deep_debug)
+						System.out.println("Canceling " + Integer.toString(i));
+					
+					// cancel timer
+					s.timer_tasks[i].cancel();
+					
+					// check time
+					timetaken = System.nanoTime() - s.timer_timestamps[i];
+					timetaken /= 1000000;
 
-				// update rtt
-				s.avg_rtt = ((s.avg_rtt * s.buf.acked_pkts) + timetaken)/(s.buf.acked_pkts + 1);
-				s.buf.acked_pkts ++;
+					// update rtt
+					s.avg_rtt = ((s.avg_rtt * s.buf.acked_pkts) + timetaken)/(s.buf.acked_pkts + 1);
+					s.buf.acked_pkts ++;
 
-				// update windows vars
-				s.seq_beg = (s.seq_beg + 1) % s.window_size;
-				s.seq_end = (s.seq_end + 1) % s.window_size;
-				s.seq_left++;
+					// update windows vars
+					s.seq_beg = (s.seq_beg + 1) % s.window_size;
+					s.seq_end = (s.seq_end + 1) % s.window_size;
+					s.seq_left++;
+				}
+
+				if(s.debug){
+					int curr_seq = (ack_seq - 1) % s.window_size;
+					if(curr_seq < 0)	curr_seq += s.window_size;
+
+					System.out.println("Seq #: " + Integer.toString(curr_seq) + 
+						"\tTime Generated: " + Long.toString((s.timer_timestamps[curr_seq]-s.startTime) / 1000000) + ":" 
+											 + Long.toString(((s.timer_timestamps[curr_seq]-s.startTime) / 1000) % 1000) + 
+						"\tRTT: " + Double.toString(timetaken) + 
+						"\tNumber of Attempts: " + Integer.toString(s.retry_attempts[curr_seq]));
+				}
+
+				if(s.deep_debug){
+					System.out.println("# of Acked pkts = " + Integer.toString(s.buf.acked_pkts));
+					System.out.println("Begin" + Integer.toString(s.seq_beg));
+					System.out.println("Next " + Integer.toString(s.seq_next));
+					System.out.println("End " + Integer.toString(s.seq_end));					
+				}
 			}
-
-			if(s.debug){
-				System.out.println("Seq #: " + Integer.toString(ack_seq) + 
-					" Time Generated: " + Long.toString((s.timer_timestamps[ack_seq]-s.startTime) / 1000000) + ":" 
-										+ Long.toString(((s.timer_timestamps[ack_seq]-s.startTime) / 1000) % 1000) + 
-					" RTT: " + Double.toString(timetaken) + 
-					" Number of Attempts: " + Integer.toString(s.retry_attempts[ack_seq]));
-			}
-
-			System.out.println("# of Acked pkts = " + Integer.toString(s.buf.acked_pkts));
-			System.out.println("Begin" + Integer.toString(s.seq_beg));
-			System.out.println("Next " + Integer.toString(s.seq_next));
-			System.out.println("End " + Integer.toString(s.seq_end));
 		}
 	}
 }
@@ -448,6 +482,7 @@ public class sender{
 		int window_size  = 8;
 		int max_buf_size = 24;
 		boolean debug 	 = false;
+		boolean deep_debug 	 = false;
 
 		// Process Command Line Args
 		int next_arg = 0;
@@ -469,6 +504,8 @@ public class sender{
 					next_arg = 6;
 				else if(arg.equals("-b"))
 					next_arg = 7;
+				else if(arg.equals("-dd"))
+					deep_debug = true;
 				else
 					errorExit("Incorrect Usage!");
 			}
@@ -504,16 +541,18 @@ public class sender{
 		// Create a buffer
 		Buffer buf = new Buffer(max_buf_size, window_size);
 
+		// Initialize Shared Data
+		SharedData s = new SharedData(buf, recvr, port, pkt_len, max_pkts, window_size, debug, ack_len, deep_debug);
+		
 		// Create thread objects
 		PacketGenerator p = new PacketGenerator(buf, pkt_len, max_pkts, pkt_gen_rate);
-		
-		SharedData s = new SharedData(buf, recvr, port, pkt_len, max_pkts, window_size, debug, ack_len);
 		ClientXmitter sendThread = new ClientXmitter(s);
 		ClientRecvr   recvThread = new ClientRecvr(s);
 
-		// Start Threads
-		System.out.println("Starting Threads!");
+		if(s.deep_debug)
+			System.out.println("Starting Threads!");
 
+		// Start Threads
 		p.start();
 		sendThread.start();
 		recvThread.start();

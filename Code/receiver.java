@@ -19,6 +19,7 @@ class GBNServer{
 	int port, max_pkts;
 	double pkt_err_rate;
 	boolean debug = false;
+	boolean deep_debug = false;
 
 	// Assumption: These are also sent
 	int pkt_len;
@@ -36,7 +37,7 @@ class GBNServer{
 	/*
 		Configures and starts server/recvr.
 	*/
-	public GBNServer(int p, int n, double per, boolean d, int pl, int ws){
+	public GBNServer(int p, int n, double per, boolean d, int pl, int ws, boolean dd){
 		
 		// Store Params
 		port = p;
@@ -47,6 +48,8 @@ class GBNServer{
 		// Assumed Vars
 		pkt_len = pl;
 		window_size = ws;
+
+		deep_debug = dd;
 
 		try{
 			// Build Server Socket
@@ -60,7 +63,8 @@ class GBNServer{
 			startTime = System.nanoTime();
 	
 			// Sanity Check Message
-			System.out.println("Receiver up at port " + Integer.toString(port));
+			if(deep_debug)
+				System.out.println("Receiver up at port " + Integer.toString(port));
 
 			// Start Server
 			run_server();
@@ -99,7 +103,10 @@ class GBNServer{
 
 		// Recv as long as max_pkts not received properly
 		for(int pkt = 0; pkt < max_pkts; pkt++){
-			
+	
+			if(deep_debug)
+				System.out.println(Integer.toString(pkt)  + " of " + Integer.toString(max_pkts));
+
 			// Receive a pkt
 			// System.out.println("Waiting for Msg Pkt!");
 			server.receive(data_packet);
@@ -109,6 +116,8 @@ class GBNServer{
 			boolean corrupt = genProb();
 			if(corrupt){
 				pkt--;
+				if(deep_debug)
+					System.out.println("Corrupt Packet Received");
 				continue;
 			}	
 
@@ -135,8 +144,8 @@ class GBNServer{
 			// Print DEBUG msgs
 			if(debug){
 				System.out.println("Seq #: " + frame_seq +
-				 " Time Received: " + Long.toString((currTime/1000000)) + ":" + Long.toString((currTime/1000)%1000) + 
-				 " Packet dropped: " + drop);
+				 "\tTime Received: " + Long.toString((currTime/1000000)) + ":" + Long.toString((currTime/1000)%1000) + 
+				 "\tPacket dropped: " + drop);
 			}
 
 			// Send ACK pkt
@@ -155,6 +164,9 @@ class GBNServer{
 
 				// Send ACK
 				server.send(ack_packet);
+
+				if(deep_debug)				
+					System.out.println("ACKed " + Integer.toString(pkt) + " Packets");
 			}
 		}
 	}
@@ -178,7 +190,7 @@ public class receiver{
 		int pkt_len  = 1500;
 		int window_size = 8;
 		double pkt_err_rate = 0.2;
-		boolean debug = false;
+		boolean debug = false, deep_debug = false;
 
 		// Process Command Line Args
 		int next_arg = 0;
@@ -196,6 +208,8 @@ public class receiver{
 					next_arg = 4;
 				else if(arg.equals("-w"))
 					next_arg = 5;
+				else if(arg.equals("-dd"))
+					deep_debug = true;
 				else
 					errorExit("Incorrect Usage!");
 			}
@@ -223,6 +237,6 @@ public class receiver{
 		}
 
 		// Begin and Run Server
-		GBNServer server = new GBNServer(port, max_pkts, pkt_err_rate, debug, pkt_len, window_size);
+		GBNServer server = new GBNServer(port, max_pkts, pkt_err_rate, debug, pkt_len, window_size, deep_debug);
 	}
 }
