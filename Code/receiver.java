@@ -101,6 +101,7 @@ class GBNServer{
 		int frame_seq = -1;
 		long currTime;
 		long corruptedpkts = 0;
+		long droppedpkts = 0;
 
 		// Recv as long as max_pkts not received properly
 		for(int pkt = 0; pkt < max_pkts; pkt++){
@@ -132,6 +133,7 @@ class GBNServer{
 			if(frame_seq != NFE){
 				drop = true;
 				pkt--;
+				droppedpkts++;
 			}
 
 			// Else update state vars
@@ -170,6 +172,7 @@ class GBNServer{
 				if(deep_debug){
 					System.out.println("ACKed " + Integer.toString(pkt) + " Packets");
 					System.out.println("Corrupted " + Long.toString(corruptedpkts) + " Packets");
+					System.out.println("Dropped " + Long.toString(droppedpkts) + " Packets");
 				}				
 			}
 		}
