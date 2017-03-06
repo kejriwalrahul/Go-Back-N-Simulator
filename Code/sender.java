@@ -94,7 +94,6 @@ class PacketGenerator extends Thread{
 
 	// Generate Packets and place in buffer
 	public void run(){
-		System.out.println("Started Packet Generation Thread!");
 
 		while(buf.acked_pkts < max_pkts){
 			// Generate & Store a random pkt
@@ -151,6 +150,8 @@ class SharedData{
 
 	// Stores sender start time
 	long startTime;
+	long totalRetries;
+	long totalXmitPkts;
 
 	public SharedData(Buffer b, String r, int p, int pl, int mp, int ws, boolean d, int al, boolean dd){
 		// Store instance params
@@ -173,6 +174,8 @@ class SharedData{
 		no_of_pkts_sent = 0; 
 
 		startTime = System.nanoTime();
+		totalRetries = 0;
+		totalXmitPkts = 0;
 
 		// Configure arrays for buffer, retries and timers
 		sent_buffer 		= new byte[window_size][pkt_len];
@@ -280,7 +283,8 @@ class ClientXmitter extends Thread{
 
 						// Increment retrial attempts
 						s.retry_attempts[i]++;
-						
+						s.totalRetries++;
+
 						// ReXmitt
 						DatagramPacket retry_data_packet;
 						try{
@@ -303,7 +307,7 @@ class ClientXmitter extends Thread{
 						// Start timer
 						s.timer_tasks[i] = new myTimerTask(timeout_pkt); 
 						s.timer_thread.schedule(s.timer_tasks[i], (long) timeout_time);
-						s.timer_timestamps[i] = System.nanoTime();					
+						// s.timer_timestamps[i] = System.nanoTime();					
 
 						if(s.deep_debug)
 							System.out.println("Timer started at " + Long.toString(s.timer_timestamps[i]) + " for going off in " +
@@ -337,6 +341,7 @@ class ClientXmitter extends Thread{
 					byte[] curr = s.buf.pop();
 					s.sent_buffer[s.seq_next] = curr;
 					s.retry_attempts[s.seq_next] = 0;
+					s.totalXmitPkts++;					
 
 					data_packet.setData(curr);
 					try{
@@ -352,6 +357,8 @@ class ClientXmitter extends Thread{
 					s.timer_tasks[s.seq_next] = new myTimerTask(s.seq_next);
 					s.timer_thread.schedule(s.timer_tasks[s.seq_next], (long) timeout_time);
 					s.timer_timestamps[s.seq_next] = System.nanoTime();
+
+					// System.out.println("scheduled at " + Long.toString(s.timer_tasks[s.seq_next].scheduledExecutionTime()));
 
 					if(s.deep_debug)
 						System.out.println("Xmitted " + Integer.toString(s.seq_next));	
@@ -449,10 +456,10 @@ class ClientRecvr extends Thread{
 					if(curr_seq < 0)	curr_seq += s.window_size;
 
 					System.out.println("Seq #: " + Integer.toString(curr_seq) + 
-						"\tTime Generated: " + Long.toString((s.timer_timestamps[curr_seq]-s.startTime) / 1000000) + ":" 
+						" Time Generated: " + Long.toString((s.timer_timestamps[curr_seq]-s.startTime) / 1000000) + ":" 
 											 + Long.toString(((s.timer_timestamps[curr_seq]-s.startTime) / 1000) % 1000) + 
-						"\tRTT: " + Double.toString(timetaken) + 
-						"\tNumber of Attempts: " + Integer.toString(s.retry_attempts[curr_seq]));
+						" RTT: " + Double.toString(timetaken) + 
+						" Number of Attempts: " + Integer.toString(s.retry_attempts[curr_seq]));
 				}
 
 				if(s.deep_debug){
@@ -576,15 +583,17 @@ public class sender{
 		}
 
 		// Print end info
-		double rexmit_ratio = s.max_pkts;
-		for(int i: s.retry_attempts)
-			rexmit_ratio += i;
-		rexmit_ratio /= s.max_pkts;
+		double rexmit_ratio = ((s.totalRetries + s.totalXmitPkts)*1.0) / (buf.acked_pkts);
+		long millis = (long) s.avg_rtt;
+		long micros = ((long) (s.avg_rtt * 1000)) % 1000;
 
-		System.out.println("\n\nPACKET_GEN_RATE = " + Integer.toString(p.pkt_gen_rate));
-		System.out.println("PACKET_LENGTH = " + Integer.toString(s.pkt_len));
-		System.out.println("Retransmission Ratio = " + Double.toString(rexmit_ratio));
-		System.out.println("Average RTT = " + Double.toString(s.avg_rtt));
+		if(deep_debug)
+			System.out.println("Total xmits: " + Long.toString(s.totalRetries + s.totalXmitPkts) + ", Total acks: " + Long.toString(buf.acked_pkts));
+
+		System.out.println("\n\nPktRate = " + Integer.toString(p.pkt_gen_rate) 
+			+ ", Length = " + Integer.toString(s.pkt_len)
+			+ ", Retran Ratio = " + Double.toString(rexmit_ratio)
+			+ ", Avg RTT: " + Long.toString(millis) + ":" + Long.toString(micros));
 		System.exit(1);
 	}
 }

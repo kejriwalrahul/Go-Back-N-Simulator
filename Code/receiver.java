@@ -144,8 +144,8 @@ class GBNServer{
 			// Print DEBUG msgs
 			if(debug){
 				System.out.println("Seq #: " + frame_seq +
-				 "\tTime Received: " + Long.toString((currTime/1000000)) + ":" + Long.toString((currTime/1000)%1000) + 
-				 "\tPacket dropped: " + drop);
+				 " Time Received: " + Long.toString((currTime/1000000)) + ":" + Long.toString((currTime/1000)%1000) + 
+				 " Packet dropped: " + drop);
 			}
 
 			// Send ACK pkt
