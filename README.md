@@ -42,4 +42,4 @@ A Simulation for GBN Protocol
         max_buf_size = 10
         pkt_err_rate = 0.00001
 
-5. '-d' enables DEBUG mode. '-dd' enables deep debug mode (prints additional information). 
+5. '-d' enables DEBUG mode. '-dd' enables deep debug mode (prints additional information). Preferable to use -dd for seeing what is happening.

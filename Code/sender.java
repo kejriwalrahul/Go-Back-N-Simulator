@@ -127,6 +127,7 @@ class SharedData{
 	int window_size;
 	boolean debug;
 	boolean deep_debug;
+	int pkt_gen_rate;
 
 	// Assumed
 	int ack_len;
@@ -153,7 +154,7 @@ class SharedData{
 	long totalRetries;
 	long totalXmitPkts;
 
-	public SharedData(Buffer b, String r, int p, int pl, int mp, int ws, boolean d, int al, boolean dd){
+	public SharedData(Buffer b, String r, int p, int pl, int mp, int ws, boolean d, int al, boolean dd, int pgr){
 		// Store instance params
 		buf 	= b;
 		recvr 	= r;
@@ -165,6 +166,7 @@ class SharedData{
 		ack_len = al;
 
 		deep_debug = dd;
+		pkt_gen_rate = pgr;
 
 		// Configure window params
 		seq_beg = 0;
@@ -259,14 +261,23 @@ class ClientXmitter extends Thread{
 						// Check if not exceeded max retries
 						if(s.retry_attempts[i] == 5){
 							System.out.println("Exceeded Max No of Retries for Retransmission for seq # " + Integer.toString(i) + "!");
-							
+														
 							if(s.deep_debug){
 								System.out.println("Average RTT " + Double.toString(s.avg_rtt) + "!");
 								for(int j=0; j<s.window_size; j++)
 									System.out.println("Seq # " + Integer.toString(j) + " Retried " + 
 														Integer.toString(s.retry_attempts[j]) + " times");								
 							}
-							
+
+							// Print end info
+							double rexmit_ratio = ((s.totalRetries + s.totalXmitPkts)*1.0) / (s.buf.acked_pkts);
+							long millis = (long) s.avg_rtt;
+							long micros = ((long) (s.avg_rtt * 1000)) % 1000;
+
+							System.out.println("\n\nPktRate = " + Integer.toString(s.pkt_gen_rate) 
+								+ ", Length = " + Integer.toString(s.pkt_len)
+								+ ", Retran Ratio = " + Double.toString(rexmit_ratio)
+								+ ", Avg RTT: " + Long.toString(millis) + ":" + Long.toString(micros));
 							System.exit(1);
 						}
 
@@ -555,7 +566,7 @@ public class sender{
 		Buffer buf = new Buffer(max_buf_size, window_size);
 
 		// Initialize Shared Data
-		SharedData s = new SharedData(buf, recvr, port, pkt_len, max_pkts, window_size, debug, ack_len, deep_debug);
+		SharedData s = new SharedData(buf, recvr, port, pkt_len, max_pkts, window_size, debug, ack_len, deep_debug, pkt_gen_rate);
 		
 		// Create thread objects
 		PacketGenerator p = new PacketGenerator(buf, pkt_len, max_pkts, pkt_gen_rate);
