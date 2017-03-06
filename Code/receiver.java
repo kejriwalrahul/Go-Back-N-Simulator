@@ -100,6 +100,7 @@ class GBNServer{
 		// Locals / Temp vars
 		int frame_seq = -1;
 		long currTime;
+		long corruptedpkts = 0;
 
 		// Recv as long as max_pkts not received properly
 		for(int pkt = 0; pkt < max_pkts; pkt++){
@@ -116,6 +117,7 @@ class GBNServer{
 			boolean corrupt = genProb();
 			if(corrupt){
 				pkt--;
+				corruptedpkts++;
 				if(deep_debug)
 					System.out.println("Corrupt Packet Received");
 				continue;
@@ -165,8 +167,10 @@ class GBNServer{
 				// Send ACK
 				server.send(ack_packet);
 
-				if(deep_debug)				
+				if(deep_debug){
 					System.out.println("ACKed " + Integer.toString(pkt) + " Packets");
+					System.out.println("Corrupted " + Long.toString(corruptedpkts) + " Packets");
+				}				
 			}
 		}
 	}
